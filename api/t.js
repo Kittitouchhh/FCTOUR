@@ -21,7 +21,13 @@ async function redis(...cmd) {
 const getJSON = async (k) => { const v = await redis('GET', k); return v ? JSON.parse(v) : null; };
 const setJSON = (k, v) => redis('SET', k, JSON.stringify(v));
 
-const summary = (t, id) => ({ id, name: t.name, mode: t.mode, teams: t.teams.length, createdAt: t.createdAt, updatedAt: t.updatedAt, champion: t.champion ?? null });
+const summary = (t, id) => ({
+  id, name: t.name, mode: t.mode, teams: t.teams.length, createdAt: t.createdAt, updatedAt: t.updatedAt,
+  champion: t.champion ?? null, stage: t.meta?.stage ?? null, played: t.meta?.played ?? null, total: t.meta?.total ?? null,
+});
+const cleanMeta = (m) => (m && typeof m === 'object'
+  ? { stage: clean(m.stage, 60), played: Math.max(0, parseInt(m.played, 10) || 0), total: Math.max(0, parseInt(m.total, 10) || 0) }
+  : null);
 const clean = (s, n = 40) => String(s ?? '').trim().slice(0, n);
 
 module.exports = async (req, res) => {
@@ -54,6 +60,8 @@ module.exports = async (req, res) => {
       t.name = clean(t.name, 60) || 'FC Online Cup';
       t.teams = t.teams.map((x) => clean(x));
       t.results = {};
+      t.meta = cleanMeta(t.meta);
+      t.champion = null;
       t.version = 1;
       t.createdAt = t.updatedAt = Date.now();
       await setJSON(key(newId), t);
@@ -81,13 +89,22 @@ module.exports = async (req, res) => {
         const s1 = Math.max(0, Math.min(99, parseInt(result.s1, 10)));
         const s2 = Math.max(0, Math.min(99, parseInt(result.s2, 10)));
         if (!Number.isFinite(s1) || !Number.isFinite(s2)) return res.status(400).json({ error: 'BAD_SCORE' });
-        t.results[matchId] = { ta: result.ta, tb: result.tb, s1, s2, pw: result.pw === 'a' || result.pw === 'b' ? result.pw : null };
+        t.results[matchId] = { ta: result.ta, tb: result.tb, s1, s2, pw: result.pw === 'a' || result.pw === 'b' ? result.pw : null, at: Date.now() };
       }
     } else if (action === 'teams') {
       if (!Array.isArray(body.teams) || body.teams.length !== t.teams.length) return res.status(400).json({ error: 'BAD_TEAMS' });
       t.teams = body.teams.map((x, i) => clean(x) || t.teams[i]);
       if (body.name) t.name = clean(body.name, 60);
+    } else if (action === 'draw') {
+      // re-draw: new order of the same team names, only before any result is in
+      if (Object.keys(t.results || {}).length) return res.status(409).json({ error: 'LOCKED' });
+      const next = Array.isArray(body.teams) ? body.teams.map((x) => clean(x)) : [];
+      const same = next.length === t.teams.length && [...next].sort().join('\n') === [...t.teams].sort().join('\n');
+      if (!same) return res.status(400).json({ error: 'BAD_TEAMS' });
+      t.teams = next;
     } else return res.status(400).json({ error: 'BAD_ACTION' });
+
+    if (body.meta) t.meta = cleanMeta(body.meta);
 
     if ('champion' in body) t.champion = body.champion;
     t.version = (t.version || 0) + 1;
