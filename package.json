@@ -1,0 +1,7 @@
+{
+  "name": "fc-online-cup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FC Online tournament brackets: double elimination, single elimination, round robin — shared live via Upstash Redis on Vercel",
+  "engines": { "node": ">=18" }
+}
